@@ -1,0 +1,24 @@
+[package]
+name = "fortanix-vme-eif"
+version = "0.1.0"
+edition = "2021"
+authors = ["Fortanix, Inc."]
+license = "MPL-2.0"
+description = "Eif image builder for VME enclaves."
+
+[dependencies]
+aws-nitro-enclaves-image-format = "0.5"
+fortanix-vme-initramfs = { version = "0.1", path = "../fortanix-vme-initramfs" }
+serde_json = "1.0"
+sha2 = "0.9"
+tempfile = "3"
+thiserror = "1.0"
+
+[dev-dependencies]
+aws-nitro-blobs = { path = "../aws-nitro-enclaves/aws-nitro-blobs" }
+clap = { version = "4.0", features = ["derive"] }
+hex = "0.4"
+test_resources = { path = "resources/tests" }
+
+[[example]]
+name = "eif-info"

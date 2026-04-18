@@ -75,6 +75,7 @@
 //! synchronously or asynchronously.
 #![allow(unused)]
 #![no_std]
+#![cfg_attr(feature = "rustc-dep-of-std", allow(internal_features))]
 #![cfg_attr(feature = "rustc-dep-of-std", feature(staged_api))]
 #![cfg_attr(feature = "rustc-dep-of-std", unstable(feature = "sgx_platform", issue = "56975"))]
 #![doc(html_logo_url = "https://edp.fortanix.com/img/docs/edp-logo.svg",
@@ -199,30 +200,51 @@ unsafe impl Send for ByteBuffer {}
 #[derive(Copy, Clone, Eq, PartialEq)]
 #[cfg_attr(feature = "rustc-dep-of-std", unstable(feature = "sgx_platform", issue = "56975"))]
 pub enum Error {
-    PermissionDenied  =        0x01,
-    NotFound          =        0x02,
-    Interrupted       =        0x04,
-    WouldBlock        =        0x0b,
-    AlreadyExists     =        0x11,
-    InvalidInput      =        0x16,
-    BrokenPipe        =        0x20,
-    AddrInUse         =        0x62,
-    AddrNotAvailable  =        0x63,
-    ConnectionAborted =        0x67,
-    ConnectionReset   =        0x68,
-    NotConnected      =        0x6b,
-    TimedOut          =        0x6e,
-    ConnectionRefused =        0x6f,
-    InvalidData       = 0x2000_0000,
-    WriteZero         = 0x2000_0001,
-    UnexpectedEof     = 0x2000_0002,
+    PermissionDenied        =        0x01,
+    NotFound                =        0x02,
+    Interrupted             =        0x04,
+    ArgumentListTooLong     =        0x07,
+    WouldBlock              =        0x0b,
+    OutOfMemory             =        0x0c,
+    ResourceBusy            =        0x10,
+    AlreadyExists           =        0x11,
+    CrossesDevices          =        0x12,
+    NotADirectory           =        0x14,
+    IsADirectory            =        0x15,
+    InvalidInput            =        0x16,
+    ExecutableFileBusy      =        0x1a,
+    FileTooLarge            =        0x1b,
+    StorageFull             =        0x1c,
+    NotSeekable             =        0x1d,
+    ReadOnlyFilesystem      =        0x1e,
+    TooManyLinks            =        0x1f,
+    BrokenPipe              =        0x20,
+    DeadLock                =        0x23,
+    InvalidFilename         =        0x24,
+    UnSupported             =        0x26,
+    DirectoryNotEmpty       =        0x27,
+    AddrInUse               =        0x62,
+    AddrNotAvailable        =        0x63,
+    NetworkDown             =        0x64,
+    NetworkUnreachable      =        0x65,
+    ConnectionAborted       =        0x67,
+    ConnectionReset         =        0x68,
+    NotConnected            =        0x6b,
+    TimedOut                =        0x6e,
+    ConnectionRefused       =        0x6f,
+    HostUnreachable         =        0x71,
+    StaleNetworkFileHandle  =        0x74,
+    QuotaExceeded           =        0x7a,
+    InvalidData             = 0x2000_0000,
+    WriteZero               = 0x2000_0001,
+    UnexpectedEof           = 0x2000_0002,
     /// This value is reserved for `Other`, but all undefined values also map
     /// to `Other`.
-    Other             = 0x3fff_ffff,
+    Other                   = 0x3fff_ffff,
     /// Start of the range of values reserved for user-defined errors.
-    UserRangeStart    = 0x4000_0000,
+    UserRangeStart          = 0x4000_0000,
     /// End (inclusive) of the range of values reserved for user-defined errors.
-    UserRangeEnd      = 0x7fff_ffff,
+    UserRangeEnd            = 0x7fff_ffff,
 }
 
 /// A value indicating that the operation was successful.
@@ -566,13 +588,29 @@ impl Usercalls {
     pub fn send(event_set: u64, tcs: Option<Tcs>) -> Result { unimplemented!() }
 }
 
+#[repr(C)]
+#[cfg_attr(feature = "rustc-dep-of-std", unstable(feature = "sgx_platform", issue = "56975"))]
+#[derive(Copy, Clone, Debug, Default)]
+pub struct InsecureTimeInfo {
+    /// The version of this struct (currently always 0
+    pub version: u64,
+    /// The frequency the timestamp counter ticks at
+    pub frequency: u64,
+}
+
 /// # Miscellaneous
 impl Usercalls {
-    /// This returns the number of nanoseconds since midnight UTC on January 1,
-    /// 1970\. The enclave must not rely on the accuracy of this time for
-    /// security purposes, such as checking credential expiry or preventing
-    /// rollback.
-    pub fn insecure_time() -> u64 { unimplemented!() }
+    /// This returns a tuple where the first element is the number of nanoseconds
+    /// since midnight UTC on January 1, 1970.
+    /// The second element returns a pointer to `InsecureTimeInfo` in usespace that can be
+    /// used to keep track of time inside of the enclave. Runners that do not support this
+    /// field, run on hardware that do not support it, or where users want to explicitly
+    /// turn off time keeping inside the enclave, pass a null pointer. When not null, the
+    /// memory location referenced must remain valid for the lifetime of the enclave. The
+    /// enclave-runner remains in charge to free up this memory chunk.
+    /// The enclave must not rely on the accuracy of this time for security purposes,
+    /// such as checking credential expiry or preventing rollback.
+    pub fn insecure_time() -> (u64, *const InsecureTimeInfo) { unimplemented!() }
 }
 
 /// # Memory
@@ -872,7 +910,7 @@ invoke_with_abi_spec!(types);
 // function declarations inside all `impl Usercalls` blocks.
 macro_rules! define_invoke_with_usercalls {
     // collect all usercall function declarations in a list
-    (@ [$($accumulated:tt)*] $(#[$meta1:meta])* impl Usercalls { $($(#[$meta2:meta])* pub fn $f:ident($($n:ident: $t:ty),*) $(-> $r:ty)* { unimplemented!() } )* } $($remainder:tt)* ) =>
+    (@ [$($accumulated:tt)*] $(#[$meta1:meta])* impl Usercalls { $($(#[$meta2:meta])* pub fn $f:ident($($n:ident: $t:ty),*) $(-> $r:tt)* { unimplemented!() } )* } $($remainder:tt)* ) =>
         { define_invoke_with_usercalls!(@ [$($accumulated)* $(fn $f($($n: $t),*) $(-> $r)*;)*] $($remainder)*); };
     // visit modules
     (@ $accumulated:tt $(#[$meta:meta])* pub mod $modname:ident { $($contents:tt)* } $($remainder:tt)*) =>

@@ -1,3 +1,4 @@
+use std::any::Any;
 use std::cell::Cell;
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -11,6 +12,7 @@ use anyhow::Error;
 use petgraph::visit::EdgeRef;
 
 use enclave_runner::EnclaveBuilder;
+use enclave_runner_sgx::EnclaveBuilder as EnclaveBuilderSgx;
 use report_test::ReportBuilder;
 use sgx_isa::{Attributes, AttributesFlags, Miscselect, Sigstruct};
 use sgxs::loader::Load;
@@ -780,10 +782,10 @@ impl RunEnclaveProdWl {
         let sig = include_bytes!("test_enclave.sig");
         let sig = Sigstruct::try_copy_from(sig).unwrap();
 
-        let mut builder = EnclaveBuilder::new_from_memory(enclave);
+        let mut builder = EnclaveBuilderSgx::new_from_memory(enclave);
         builder.attributes(sig.attributes).sigstruct(sig);
 
-        let lib = builder.build_library(enclave_loader)?;
+        let lib = EnclaveBuilder::<_, enclave_runner::Library>::new(builder).build(enclave_loader)?;
 
         unsafe {
             match lib.call(!0, 0, 0, 0, 0) {
@@ -1154,8 +1156,8 @@ fn update<T: DetectItem, U: Dependency<T>>(
     support: &SgxSupport,
     hidden: &Cell<bool>,
 ) {
-    let dependent = dependent.downcast_mut::<U>().unwrap();
-    let dependency = dependency.downcast_ref::<T>().unwrap();
+    let dependent = (dependent as &mut dyn Any).downcast_mut::<U>().unwrap();
+    let dependency = (dependency as &dyn Any).downcast_ref::<T>().unwrap();
     dependent.update_dependency(dependency, support);
 
     let hiddenval = if U::CONTROL_VISIBILITY {

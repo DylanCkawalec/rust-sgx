@@ -1,21 +1,31 @@
 #![deny(warnings)]
 #![no_std]
-extern crate alloc;
+
 #[cfg(feature="std")]
 extern crate std;
 
-use alloc::string::String;
-use serde::{Deserialize, Serialize};
-#[cfg(feature="std")]
+#[cfg(all(feature="alloc", not(feature="std")))]
 use {
-    std::io,
-    std::net::SocketAddr,
-    vsock::Error as VsockError,
+    alloc::string::String,
+    alloc::vec::Vec,
 };
+#[cfg(all(feature="std", not(feature="alloc")))]
+use {
+    std::string::String,
+    std::vec::Vec,
+};
+
+#[cfg(feature="core")]
+use core::net::{IpAddr, SocketAddr};
+#[cfg(all(feature="std", not(feature="core")))]
+use std::net::{IpAddr, SocketAddr};
+
+#[cfg(feature="std")]
+use std::io;
 
 pub const SERVER_PORT: u32 = 10000;
 
-#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum Request {
     Connect {
         addr: String,
@@ -38,9 +48,13 @@ pub enum Request {
         enclave_port: u32,
         runner_port: Option<u32>,
     },
+    Exit {
+        code: i32,
+    },
+    Init,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Addr {
     IPv4 {
         ip: [u8; 4],
@@ -54,7 +68,16 @@ pub enum Addr {
     },
 }
 
-#[cfg(feature="std")]
+impl Addr {
+    pub fn port(&self) -> u16 {
+        match self {
+            Addr::IPv4 { port, .. } => *port,
+            Addr::IPv6 { port, .. } => *port,
+        }
+    }
+}
+
+#[cfg(any(feature="core", feature="std"))]
 impl From<SocketAddr> for Addr {
     fn from(addr: SocketAddr) -> Addr {
         match addr {
@@ -76,7 +99,21 @@ impl From<SocketAddr> for Addr {
     }
 }
 
-#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg(any(feature="core", feature="std"))]
+impl From<Addr> for SocketAddr {
+    fn from(addr: Addr) -> SocketAddr {
+        match addr {
+            Addr::IPv4{ ip, port } => {
+                SocketAddr::new(IpAddr::V4(ip.into()), port)
+            },
+            Addr::IPv6{ ip, port, .. } => {
+                SocketAddr::new(IpAddr::V6(ip.into()), port)
+            },
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
 pub enum Response {
     Connected {
         /// The vsock port the proxy is listening on for an incoming connection
@@ -106,15 +143,145 @@ pub enum Response {
         /// The address of the remote party for open connection, None for server sockets
         peer: Option<Addr>,
     },
+    // TODO Split up failed command (e.g., bind executed on behalve of runner errored) and
+    // errored runner (e.g., no info was found for fd).
     Failed(Error),
+    Init {
+        args: Vec<String>,
+    },
 }
 
-#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Eq)]
+pub enum ErrorKind {
+    NotFound,
+    PermissionDenied,
+    ConnectionRefused,
+    ConnectionReset,
+    HostUnreachable,
+    NetworkUnreachable,
+    ConnectionAborted,
+    NotConnected,
+    AddrInUse,
+    AddrNotAvailable,
+    NetworkDown,
+    BrokenPipe,
+    AlreadyExists,
+    WouldBlock,
+    NotADirectory,
+    IsADirectory,
+    DirectoryNotEmpty,
+    ReadOnlyFilesystem,
+    FilesystemLoop,
+    StaleNetworkFileHandle,
+    InvalidInput,
+    InvalidData,
+    TimedOut,
+    WriteZero,
+    StorageFull,
+    NotSeekable,
+    FilesystemQuotaExceeded,
+    FileTooLarge,
+    ResourceBusy,
+    ExecutableFileBusy,
+    Deadlock,
+    CrossesDevices,
+    TooManyLinks,
+    //FilenameTooLong,
+    ArgumentListTooLong,
+    Interrupted,
+    Unsupported,
+    UnexpectedEof,
+    OutOfMemory,
+    Other,
+    Uncategorized,
+}
+
+#[cfg(feature="std")]
+impl From<io::ErrorKind> for ErrorKind {
+    fn from(kind: io::ErrorKind) -> ErrorKind {
+        match kind {
+            io::ErrorKind::NotFound => ErrorKind::NotFound,
+            io::ErrorKind::PermissionDenied => ErrorKind::PermissionDenied,
+            io::ErrorKind::ConnectionRefused => ErrorKind::ConnectionRefused,
+            io::ErrorKind::ConnectionReset => ErrorKind::ConnectionReset,
+            // Unstable std library feature io_error_more
+            //io::ErrorKind::HostUnreachable => ErrorKind::HostUnreachable,
+            // Unstable std library feature io_error_more
+            //io::ErrorKind::NetworkUnreachable => ErrorKind::NetworkUnreachable,
+            io::ErrorKind::ConnectionAborted => ErrorKind::ConnectionAborted,
+            io::ErrorKind::NotConnected => ErrorKind::NotConnected,
+            io::ErrorKind::AddrInUse => ErrorKind::AddrInUse,
+            io::ErrorKind::AddrNotAvailable => ErrorKind::AddrNotAvailable,
+            // Unstable std library feature io_error_more
+            //io::ErrorKind::NetworkDown => ErrorKind::NetworkDown,
+            io::ErrorKind::BrokenPipe => ErrorKind::BrokenPipe,
+            io::ErrorKind::AlreadyExists => ErrorKind::AlreadyExists,
+            io::ErrorKind::WouldBlock => ErrorKind::WouldBlock,
+            // Unstable std library feature io_error_more
+            //io::ErrorKind::NotADirectory => ErrorKind::NotADirectory,
+            // Unstable std library feature io_error_more
+            //io::ErrorKind::IsADirectory => ErrorKind::IsADirectory,
+            // Unstable std library feature io_error_more
+            //io::ErrorKind::DirectoryNotEmpty => ErrorKind::DirectoryNotEmpty,
+            // Unstable std library feature io_error_more
+            //io::ErrorKind::ReadOnlyFilesystem => ErrorKind::ReadOnlyFilesystem,
+            // Unstable std library feature io_error_more
+            //io::ErrorKind::FilesystemLoop => ErrorKind::FilesystemLoop,
+            // Unstable std library feature io_error_more
+            //io::ErrorKind::StaleNetworkFileHandle => ErrorKind::StaleNetworkFileHandle,
+            io::ErrorKind::InvalidInput => ErrorKind::InvalidInput,
+            io::ErrorKind::InvalidData => ErrorKind::InvalidData,
+            io::ErrorKind::TimedOut => ErrorKind::TimedOut,
+            io::ErrorKind::WriteZero => ErrorKind::WriteZero,
+            // Unstable std library feature io_error_more
+            //io::ErrorKind::StorageFull => ErrorKind::StorageFull,
+            // Unstable std library feature io_error_more
+            //io::ErrorKind::NotSeekable => ErrorKind::NotSeekable,
+            // Unstable std library feature io_error_more
+            //io::ErrorKind::FilesystemQuotaExceeded => ErrorKind::FilesystemQuotaExceeded,
+            // Unstable std library feature io_error_more
+            //io::ErrorKind::FileTooLarge => ErrorKind::FileTooLarge,
+            // Unstable std library feature io_error_more
+            //io::ErrorKind::ResourceBusy => ErrorKind::ResourceBusy,
+            // Unstable std library feature io_error_more
+            //io::ErrorKind::ExecutableFileBusy => ErrorKind::ExecutableFileBusy,
+            // Unstable std library feature io_error_more
+            //io::ErrorKind::Deadlock => ErrorKind::Deadlock,
+            // Unstable std library feature io_error_more
+            //io::ErrorKind::CrossesDevices => ErrorKind::CrossesDevices,
+            // Unstable std library feature io_error_more
+            //io::ErrorKind::TooManyLinks => ErrorKind::TooManyLinks,
+            // Unstable std library feature
+            //io::ErrorKind::FilenameTooLong => ErrorKind::FilenameTooLong,
+            // Unstable std library feature io_error_more
+            //io::ErrorKind::ArgumentListTooLong => ErrorKind::ArgumentListTooLong,
+            io::ErrorKind::Interrupted => ErrorKind::Interrupted,
+            io::ErrorKind::Unsupported => ErrorKind::Unsupported,
+            io::ErrorKind::UnexpectedEof => ErrorKind::UnexpectedEof,
+            io::ErrorKind::OutOfMemory => ErrorKind::OutOfMemory,
+            io::ErrorKind::Other => ErrorKind::Other,
+            // Unstable std library feature io_error_uncategorized
+            //io::ErrorKind::Uncategorized => ErrorKind::Uncategorized,
+            _ => ErrorKind::Other,
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+#[cfg_attr(feature="std", derive(thiserror::Error))]
 pub enum Error {
+    #[cfg_attr(feature="std", error("connection not found"))]
     ConnectionNotFound,
+    #[cfg_attr(feature="std", error("system error {0}"))]
     SystemError(i32),
+    #[cfg_attr(feature="std", error("unknown error"))]
     Unknown,
+    #[cfg_attr(feature="std", error("vsock error"))]
     VsockError,
+    /// Command executed on behalf of enclave (e.g., bind, accept, ...) resulted in an error. 
+    ///   This error itself should be returned as the result of the command.
+    #[cfg_attr(feature="std", error("enclave command error of kind {0:?}"))]
+    Command(ErrorKind),
 }
 
 #[cfg(feature="std")]
@@ -128,34 +295,8 @@ impl From<io::Error> for Error {
     }
 }
 
-#[cfg(feature="std")]
-impl From<VsockError> for Error {
-    fn from(error: VsockError) -> Error {
-        match error {
-            VsockError::EntropyError        => Error::VsockError,
-            VsockError::SystemError(errno)  => Error::SystemError(errno),
-            VsockError::WrongAddressType    => Error::VsockError,
-            VsockError::ZeroDurationTimeout => Error::VsockError,
-            VsockError::ReservedPort        => Error::VsockError,
-        }
-    }
-}
-
 #[cfg(test)]
-mod test {
-    use std::net::{IpAddr, SocketAddr};
-    use std::str::FromStr;
-    use crate::Addr;
+mod test;
 
-    #[test]
-    fn test_addr() {
-        let sock_addr = SocketAddr::from_str("10.11.12.13:4567").unwrap();
-        if let Addr::IPv4 { port, ip } = sock_addr.into() {
-            assert_eq!(IpAddr::from(ip), sock_addr.ip());   
-            assert_eq!(port, sock_addr.port());
-            assert_eq!(port, 4567);
-        } else {
-            panic!("Not IPv4")
-        }
-    }
-}
+#[cfg(feature="serde")]
+mod serde_impls;
